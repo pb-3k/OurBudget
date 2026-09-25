@@ -3,6 +3,7 @@ import streamlit as st
 
 from datetime import date
 from decimal import Decimal, InvalidOperation
+from math import ceil
 
 from database import (
     initialize_database,
@@ -27,6 +28,13 @@ st.write(
 )
 
 # --------------------------------------------------
+# DISPLAY SUCCESS MESSAGE
+# --------------------------------------------------
+
+if st.session_state.pop("planned_item_saved", False):
+
+    st.success("Added to our moving-in plan!")
+# --------------------------------------------------
 # SELECT PLANNING MONTH
 # --------------------------------------------------
 
@@ -37,99 +45,7 @@ selected_date = st.date_input(
 
 plan_month = selected_date.strftime("%Y-%m")
 
-# --------------------------------------------------
-# ADD PLANNED ITEM
-# --------------------------------------------------
 
-st.subheader("Add a planned item")
-
-with st.form("planned_item_form", clear_on_submit=True):
-
-    item_type = st.selectbox(
-        "Income or expense?",
-        ["Expense", "Income"]
-    )
-
-    description = st.text_input(
-        "Description",
-        placeholder="e.g. Apartment rent"
-    )
-
-    category = st.selectbox(
-        "Category",
-        [
-            "Rent",
-            "Utilities",
-            "Groceries",
-            "Internet",
-            "Household",
-            "Furniture",
-            "Deposit",
-            "Moving",
-            "Salary",
-            "Savings",
-            "Other"
-        ]
-    )
-
-    frequency = st.selectbox(
-        "Frequency",
-        ["Monthly", "One-time"]
-    )
-
-    amount = st.text_input(
-        "Expected amount (€)",
-        placeholder="700.00"
-    )
-
-    submitted = st.form_submit_button(
-        "Add to our plan 💚"
-    )
-
-    if submitted:
-
-        try:
-
-            euros = Decimal(amount.strip())
-
-            if (
-                not euros.is_finite()
-                or euros <= 0
-                or euros != euros.quantize(Decimal("0.01"))
-            ):
-
-                st.error(
-                    "Enter a positive amount with at most two decimal places."
-                )
-
-            elif not description.strip():
-
-                st.error(
-                    "Please enter a description."
-                )
-
-            else:
-
-                amount_cents = int(euros * 100)
-
-                add_planned_item(
-                    plan_month,
-                    description.strip(),
-                    category,
-                    item_type,
-                    frequency,
-                    amount_cents
-                )
-
-                st.success(
-                    "Added to our moving-in plan!"
-                )
-
-        except InvalidOperation:
-
-            st.error(
-                "Please enter a valid amount."
-            )
             
 # --------------------------------------------------
 # RETRIEVE PLANNED ITEMS
@@ -185,6 +101,19 @@ moving_month_remaining = (
     - one_time_expenses
 )
 
+# --------------------------------------------------
+# FIND CURRENT PLANNED RENT
+# --------------------------------------------------
+
+planned_rent = sum(
+    item["amount_cents"]
+    for item in planned_items
+    if (
+        item["category"] == "Rent"
+        and item["item_type"] == "Expense"
+        and item["frequency"] == "Monthly"
+    )
+)
 # --------------------------------------------------
 # FORMATTING
 # --------------------------------------------------
@@ -389,7 +318,173 @@ with col2:
         "Moving-month Remaining",
         format_euros(moving_month_remaining)
     )
-    
+
+# --------------------------------------------------
+# OUR MOVING-IN SAVINGS FUND
+# --------------------------------------------------
+
+st.divider()
+
+st.subheader("Our Moving-In Savings Fund 💚")
+
+st.write(
+    "Estimate how much money we want to have saved before moving day."
+)
+
+# --------------------------------------------------
+# SAVINGS GOAL SETTINGS
+# --------------------------------------------------
+
+st.caption("Savings goal settings")
+
+include_first_month_rent = st.checkbox(
+    "Include first month's rent in the goal",
+    value=True
+)
+
+settings_col1, settings_col2 = st.columns(
+    2,
+    gap="large"
+)
+
+with settings_col1:
+
+    emergency_buffer_euros = st.number_input(
+        "Emergency buffer (€)",
+        min_value=0.0,
+        value=300.00,
+        step=50.0,
+        format="%.2f"
+    )
+
+with settings_col2:
+
+    already_saved_euros = st.number_input(
+        "Already saved together (€)",
+        min_value=0.0,
+        value=0.00,
+        step=50.0,
+        format="%.2f"
+    )
+
+
+# --------------------------------------------------
+# CALCULATE SAVINGS GOAL
+# --------------------------------------------------
+
+base_goal_cents = one_time_expenses
+
+if include_first_month_rent:
+
+    base_goal_cents += planned_rent
+
+emergency_buffer_cents = int(
+    Decimal(str(emergency_buffer_euros)) * 100
+)
+
+already_saved_cents = int(
+    Decimal(str(already_saved_euros)) * 100
+)
+
+savings_goal_cents = (
+    base_goal_cents + emergency_buffer_cents
+)
+
+remaining_to_save_cents = max(
+    savings_goal_cents - already_saved_cents,
+    0
+)
+
+if savings_goal_cents > 0:
+
+    progress_ratio = min(
+        already_saved_cents / savings_goal_cents,
+        1
+    )
+
+else:
+
+    progress_ratio = 0
+
+progress_percent = int(progress_ratio * 100)
+
+
+# --------------------------------------------------
+# SAVINGS FUND VISUAL OVERVIEW
+# --------------------------------------------------
+
+with st.container(border=True):
+
+    st.markdown("#### Our savings progress 🏡")
+
+    goal_col1, goal_col2, goal_col3 = st.columns(3)
+
+    with goal_col1:
+
+        st.metric(
+            "Savings Goal",
+            format_euros(savings_goal_cents)
+        )
+
+    with goal_col2:
+
+        st.metric(
+            "Already Saved",
+            format_euros(already_saved_cents)
+        )
+
+    with goal_col3:
+
+        st.metric(
+            "Still Needed",
+            format_euros(remaining_to_save_cents)
+        )
+
+    st.divider()
+
+    st.progress(progress_percent)
+
+    st.caption(
+        f"{progress_percent}% of our goal reached."
+    )
+
+    # ----------------------------------------------
+    # SAVINGS STATUS MESSAGE
+    # ----------------------------------------------
+
+    if savings_goal_cents == 0:
+
+        st.info(
+            "Add planned moving expenses to calculate "
+            "your savings goal. 💚"
+        )
+
+    elif remaining_to_save_cents == 0:
+
+        st.success(
+            "You've already reached your current "
+            "moving-in savings goal! 💚"
+        )
+
+    elif monthly_remaining > 0:
+
+        months_to_goal = ceil(
+            remaining_to_save_cents / monthly_remaining
+        )
+
+        st.info(
+            f"If you save your projected monthly remaining "
+            f"amount, you could reach this goal in about "
+            f"{months_to_goal} month(s)."
+        )
+
+    else:
+
+        st.warning(
+            "Your current monthly plan does not leave "
+            "money remaining for savings yet."
+        )
+
 # --------------------------------------------------
 # PLANNED ITEMS TABLE
 # --------------------------------------------------
@@ -430,7 +525,8 @@ if planned_items:
     st.dataframe(
         display_items,
         use_container_width=True,
-        hide_index=True
+        hide_index=True,
+        height="content"
     )
 
 else:
@@ -438,95 +534,167 @@ else:
     st.info(
         "No planned items for this month yet."
     )
-    
+# --------------------------------------------------
+# ADD PLANNED ITEM
+# --------------------------------------------------
+
+with st.expander("➕ Add a planned item", expanded=False):
+
+    with st.form("planned_item_form", clear_on_submit=True):
+
+        item_type = st.selectbox(
+            "Income or expense?",
+            ["Expense", "Income"]
+        )
+
+        description = st.text_input(
+            "Description",
+            placeholder="e.g. Apartment rent"
+        )
+
+        category = st.selectbox(
+            "Category",
+            [
+                "Rent",
+                "Utilities",
+                "Groceries",
+                "Internet",
+                "Household",
+                "Furniture",
+                "Deposit",
+                "Moving",
+                "Salary",
+                "Savings",
+                "Other"
+            ]
+        )
+
+        frequency = st.selectbox(
+            "Frequency",
+            ["Monthly", "One-time"]
+        )
+
+        amount = st.text_input(
+            "Expected amount (€)",
+            placeholder="700.00"
+        )
+
+        submitted = st.form_submit_button(
+            "Add to our plan 💚"
+        )
+
+        if submitted:
+
+            try:
+
+                euros = Decimal(amount.strip())
+
+                if (
+                    not euros.is_finite()
+                    or euros <= 0
+                    or euros != euros.quantize(Decimal("0.01"))
+                ):
+
+                    st.error(
+                        "Enter a positive amount with at most two decimal places."
+                    )
+
+                elif not description.strip():
+
+                    st.error(
+                        "Please enter a description."
+                    )
+
+                else:
+
+                    amount_cents = int(euros * 100)
+
+                    add_planned_item(
+                        plan_month,
+                        description.strip(),
+                        category,
+                        item_type,
+                        frequency,
+                        amount_cents
+                    )
+
+                    st.session_state["planned_item_saved"] = True
+
+                    st.rerun()
+
+            except InvalidOperation:
+
+                st.error(
+                    "Please enter a valid amount."
+                )    
 # --------------------------------------------------
 # APARTMENT RENT COMPARISON
 # --------------------------------------------------
 
 st.divider()
 
-st.subheader("What if we chose a different apartment? 🏡")
+with st.expander("🏡 Compare apartment rent", expanded=False):
 
-st.write(
-    "Try changing the rent to see how it affects "
-    "our projected monthly budget."
-)
-
-
-# Find our existing planned rent
-planned_rent = sum(
-    item["amount_cents"]
-    for item in planned_items
-    if (
-        item["category"] == "Rent"
-        and item["item_type"] == "Expense"
-        and item["frequency"] == "Monthly"
+    st.write(
+        "Try changing the rent to see how it affects "
+        "our projected monthly budget."
     )
-)
 
+    alternative_rent = st.number_input(
+        "Alternative monthly rent (€)",
+        min_value=0.0,
+        value=float(planned_rent / 100),
+        step=25.0,
+        format="%.2f"
+    )
 
-# Create an interactive rent input
-alternative_rent = st.number_input(
-    "Alternative monthly rent (€)",
-    min_value=0.0,
-    value=float(planned_rent / 100),
-    step=25.0,
-    format="%.2f"
-)
+    alternative_rent_cents = int(
+        Decimal(str(alternative_rent)) * 100
+    )
 
+    alternative_remaining = (
+        monthly_remaining
+        + planned_rent
+        - alternative_rent_cents
+    )
 
-# Convert the alternative rent into cents
-alternative_rent_cents = int(
-    Decimal(str(alternative_rent)) * 100
-)
-
-
-# Replace the original rent in our calculation
-alternative_remaining = (
-    monthly_remaining
-    + planned_rent
-    - alternative_rent_cents
-)
-
-
-st.metric(
-    "Remaining with this apartment",
-    format_euros(alternative_remaining)
-)
-
+    st.metric(
+        "Remaining with this apartment",
+        format_euros(alternative_remaining)
+    )
 # --------------------------------------------------
 # DELETE PLANNED ITEM
 # --------------------------------------------------
 
 st.divider()
 
-st.subheader("Remove a planned item")
+with st.expander("🗑️ Remove a planned item", expanded=False):
 
-if planned_items:
+    if planned_items:
 
-    selected_item_id = st.selectbox(
-        "Select the item you want to delete",
+        selected_item_id = st.selectbox(
+            "Select the item you want to delete",
 
-        options=[
-            item["id"]
-            for item in planned_items
-        ],
+            options=[
+                item["id"]
+                for item in planned_items
+            ],
 
-        format_func=lambda item_id: next(
-            (
-                f'{item["description"]} '
-                f'({item["item_type"]}, '
-                f'{format_euros(item["amount_cents"])})'
+            format_func=lambda item_id: next(
+                (
+                    f'{item["description"]} '
+                    f'({item["item_type"]}, '
+                    f'{format_euros(item["amount_cents"])})'
+                )
+                for item in planned_items
+                if item["id"] == item_id
             )
-            for item in planned_items
-            if item["id"] == item_id
         )
-    )
 
-    if st.button("Delete selected item", type="primary"):
+        if st.button("Delete selected item", type="primary"):
 
-        confirm_delete_planned_item(selected_item_id)
+            confirm_delete_planned_item(selected_item_id)
 
-else:
+    else:
 
-    st.info("No planned items to delete.")
+        st.info("No planned items to delete.")

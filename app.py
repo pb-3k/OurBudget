@@ -289,10 +289,11 @@ if transactions:
         })
 
     st.dataframe(
-        display_transactions,
-        use_container_width=True,
-        hide_index=True
-    )
+    display_transactions,
+    use_container_width=True,
+    hide_index=True,
+    height=280
+      )
 
 else:
 
